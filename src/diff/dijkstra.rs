@@ -1,7 +1,7 @@
 //! Implements Dijkstra's algorithm for shortest path, to find an
 //! optimal and readable diff between two ASTs.
 
-use std::{cmp::Reverse, env};
+use std::{cmp::Reverse, env, iter::successors};
 
 use crate::{
     diff::changes::ChangeMap,
@@ -15,9 +15,12 @@ use radix_heap::RadixHeapMap;
 #[derive(Debug)]
 pub struct ExceededGraphLimit {}
 
-/// Return the shortest route from `start` to the end vertex.
-fn shortest_vertex_path<'a, 'b>(
-    start: &'b Vertex<'a, 'b>,
+/// Return the shortest route from the `start` to the end vertex.
+///
+/// The vec returned does not return the very last vertex. This is
+/// necessary because a route of N vertices only has N-1 edges.
+fn shortest_path<'a, 'b>(
+    start: Vertex<'a, 'b>,
     vertex_arena: &'b Bump,
     size_hint: usize,
     graph_limit: usize,
@@ -27,10 +30,12 @@ fn shortest_vertex_path<'a, 'b>(
     // Reverse to flip comparisons.
     let mut heap: RadixHeapMap<Reverse<_>, &'b Vertex<'a, 'b>> = RadixHeapMap::new();
 
-    heap.push(Reverse(0), start);
+    heap.push(Reverse(0), vertex_arena.alloc(start));
 
     let mut seen = SeenMap::default();
     seen.reserve(size_hint);
+
+    let mut neighbors = Vec::with_capacity(4);
 
     let end: &'b Vertex<'a, 'b> = loop {
         match heap.pop() {
@@ -44,7 +49,10 @@ fn shortest_vertex_path<'a, 'b>(
                     break current;
                 }
 
-                for (edge, next) in get_neighbours(current, vertex_arena, &mut seen) {
+                neighbors.clear();
+                get_neighbours(current, vertex_arena, &mut seen, &mut neighbors);
+
+                for &(edge, next) in neighbors.iter() {
                     let distance_to_next = distance + edge.cost();
 
                     if distance_to_next < next.shortest_distance.get() {
@@ -69,60 +77,27 @@ fn shortest_vertex_path<'a, 'b>(
         heap.len(),
     );
 
-    let mut current = end.predecessor.get();
-    let mut vertex_route = vec![];
-    while let Some((edge, node)) = current {
-        vertex_route.push((edge, node));
-        current = node.predecessor.get();
-    }
-
+    let mut vertex_route =
+        successors(end.predecessor.get(), |&(_, node)| node.predecessor.get()).collect::<Vec<_>>();
     vertex_route.reverse();
     Ok(vertex_route)
 }
 
-/// Return the shortest route from the `start` to the end vertex.
-///
-/// The vec returned does not return the very last vertex. This is
-/// necessary because a route of N vertices only has N-1 edges.
-fn shortest_path<'a, 'b>(
-    start: Vertex<'a, 'b>,
-    vertex_arena: &'b Bump,
-    size_hint: usize,
-    graph_limit: usize,
-) -> Result<Vec<(Edge, &'b Vertex<'a, 'b>)>, ExceededGraphLimit> {
-    let start: &'b Vertex<'a, 'b> = vertex_arena.alloc(start);
-    shortest_vertex_path(start, vertex_arena, size_hint, graph_limit)
-}
-
 /// What is the total number of AST nodes?
 fn node_count(root: Option<&Syntax>) -> u32 {
-    let mut node = root;
-    let mut count = 0;
-    while let Some(current_node) = node {
-        let current_count = match current_node {
+    successors(root, |node| node.next_sibling())
+        .map(|node| match node {
             Syntax::List {
                 num_descendants, ..
             } => *num_descendants,
             Syntax::Atom { .. } => 1,
-        };
-        count += current_count;
-
-        node = current_node.next_sibling();
-    }
-
-    count
+        })
+        .sum::<u32>()
 }
 
 /// How many top-level AST nodes do we have?
 fn tree_count(root: Option<&Syntax>) -> u32 {
-    let mut node = root;
-    let mut count = 0;
-    while let Some(current_node) = node {
-        count += 1;
-        node = current_node.next_sibling();
-    }
-
-    count
+    successors(root, |node| node.next_sibling()).count() as u32
 }
 
 pub fn mark_syntax<'a>(
@@ -148,7 +123,7 @@ pub fn mark_syntax<'a>(
     let size_hint = lhs_node_count * rhs_node_count;
 
     let start = Vertex::new(lhs_syntax, rhs_syntax);
-    let vertex_arena = Bump::new();
+    let vertex_arena = Bump::with_capacity(size_hint);
 
     let route = shortest_path(start, &vertex_arena, size_hint, graph_limit)?;
 
@@ -166,10 +141,10 @@ pub fn mark_syntax<'a>(
                 format!(
                     "{:20} {:20} --- {:3} {:?}",
                     x.1.lhs_syntax
-                        .get_ref()
+                        .get_side()
                         .map_or_else(|| "None".into(), Syntax::dbg_content),
                     x.1.rhs_syntax
-                        .get_ref()
+                        .get_side()
                         .map_or_else(|| "None".into(), Syntax::dbg_content),
                     x.0.cost(),
                     x.0,
