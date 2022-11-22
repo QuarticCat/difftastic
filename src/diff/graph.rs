@@ -30,16 +30,12 @@ pub struct SideSyntax<'a> {
 }
 
 impl<'a> SideSyntax<'a> {
-    pub fn is_side(&self) -> bool {
-        self.data as usize & 1 == 0
-    }
-
-    pub fn is_parent(&self) -> bool {
-        self.data as usize & 1 == 1
+    pub fn is_end(&self) -> bool {
+        self.data as usize == 1
     }
 
     pub fn get_side(&self) -> Option<&'a Syntax<'a>> {
-        if self.is_side() {
+        if self.data as usize & 1 == 0 {
             let data = self.data;
             unsafe { std::mem::transmute(data) }
         } else {
@@ -48,7 +44,7 @@ impl<'a> SideSyntax<'a> {
     }
 
     pub fn get_parent(&self) -> Option<&'a Syntax<'a>> {
-        if self.is_parent() {
+        if self.data as usize & 1 == 1 {
             let data = self.data.wrapping_sub(1);
             unsafe { std::mem::transmute(data) }
         } else {
@@ -151,11 +147,7 @@ pub struct Vertex<'a, 'b> {
 
 impl<'a, 'b> Vertex<'a, 'b> {
     pub fn is_end(&self) -> bool {
-        self.lhs_syntax.is_parent()
-            && self.rhs_syntax.is_parent()
-            && self.pop_both_ancestor.is_none()
-            && self.pop_lhs_cnt == 0
-            && self.pop_rhs_cnt == 0
+        self.lhs_syntax.is_end() && self.rhs_syntax.is_end()
     }
 
     pub fn new(lhs_syntax: Option<&'a Syntax<'a>>, rhs_syntax: Option<&'a Syntax<'a>>) -> Self {
@@ -173,13 +165,12 @@ impl<'a, 'b> Vertex<'a, 'b> {
     }
 
     fn delim_stack_eq(&self, other: &Vertex<'a, 'b>) -> bool {
+        // We've already checked that LHS/RHS syntaxes are equal. Now
+        // if their PopBoth ancestors are equal, the whole stack must
+        // be equal.
+        //
         // Vertices are pinned so addresses can be used as unique IDs.
         get_ptr(self.pop_both_ancestor) == get_ptr(other.pop_both_ancestor)
-        // We've already checked that LHS/RHS syntaxes are equal.
-        // Then if their PopBoth ancestors are equal, PopLhs/Rhs
-        // counts must be equal.
-        // && self.pop_lhs_cnt == other.pop_lhs_cnt
-        // && self.pop_rhs_cnt == other.pop_rhs_cnt
     }
 
     fn can_pop_either(&self) -> bool {

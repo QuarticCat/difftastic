@@ -429,6 +429,7 @@ pub fn init_next_prev<'a>(roots: &[&'a Syntax<'a>]) {
     set_next_sibling(roots);
     set_prev(roots, None);
     set_prev_is_contiguous(roots);
+    unset_parent(roots);
 }
 
 /// Set all the `SyntaxInfo` values for all the `roots` on a single
@@ -525,6 +526,12 @@ fn set_parent<'a>(nodes: &[&'a Syntax<'a>], parent: Option<&'a Syntax<'a>>) {
         if let List { children, .. } = node {
             set_parent(children, Some(node));
         }
+    }
+}
+
+fn unset_parent(roots: &[&Syntax]) {
+    for node in roots {
+        node.info().parent.set(None);
     }
 }
 
