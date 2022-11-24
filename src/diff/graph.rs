@@ -105,7 +105,7 @@ pub struct Vertex<'a, 'b> {
     pub is_visited: Cell<bool>,
     pub shortest_distance: Cell<u32>,
     pub pred_edge: Cell<Option<Edge>>,
-    pub pred_vertex: Cell<Option<&'b Vertex<'a, 'b>>>,
+    pub pred_vertex: Cell<Option<&'b Self>>,
 
     // core info
     pub lhs_syntax: SideSyntax<'a>,
@@ -140,7 +140,7 @@ pub struct Vertex<'a, 'b> {
     //   V  |PopEither| |PopEither|
     //  Top             |PopEither|
     // ```
-    pop_both_ancestor: Option<&'b Vertex<'a, 'b>>,
+    pop_both_ancestor: Option<&'b Self>,
     pop_lhs_cnt: u8,
     pop_rhs_cnt: u8,
 }
@@ -151,7 +151,7 @@ impl<'a, 'b> Vertex<'a, 'b> {
     }
 
     pub fn new(lhs_syntax: Option<&'a Syntax<'a>>, rhs_syntax: Option<&'a Syntax<'a>>) -> Self {
-        Vertex {
+        Self {
             is_visited: Cell::new(false),
             shortest_distance: Cell::new(u32::MAX),
             pred_edge: Cell::new(None),
@@ -164,7 +164,7 @@ impl<'a, 'b> Vertex<'a, 'b> {
         }
     }
 
-    fn delim_stack_eq(&self, other: &Vertex<'a, 'b>) -> bool {
+    fn delim_stack_eq(&self, other: &Self) -> bool {
         // We've already checked that LHS/RHS syntaxes are equal. Now
         // if their PopBoth ancestors are equal, the whole stack must
         // be equal.
@@ -404,7 +404,7 @@ pub fn get_neighbours<'syn, 'b>(
                 - rhs_syntax.num_ancestors() as i32)
                 .unsigned_abs();
             let cost = min(40, depth_difference + 1);
-
+            
             add_neighbor(
                 UnchangedNode,
                 cost,
@@ -531,7 +531,6 @@ pub fn populate_change_map<'a, 'b>(
                 // No change on this node or its children.
                 let lhs = v.lhs_syntax.get_side().unwrap();
                 let rhs = v.rhs_syntax.get_side().unwrap();
-
                 insert_deep_unchanged(lhs, rhs, change_map);
             }
             EnterUnchangedDelimiter => {

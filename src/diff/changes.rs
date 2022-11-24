@@ -51,8 +51,8 @@ pub fn insert_deep_unchanged<'a>(
                 ..
             },
         ) => {
-            for (child, opposite_child) in lhs_children.iter().zip(rhs_children) {
-                insert_deep_unchanged(child, opposite_child, change_map);
+            for (lhs_child, rhs_child) in lhs_children.iter().zip(rhs_children) {
+                insert_deep_unchanged(lhs_child, rhs_child, change_map);
             }
         }
         (Syntax::Atom { .. }, Syntax::Atom { .. }) => {}
