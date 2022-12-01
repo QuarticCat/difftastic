@@ -2,7 +2,7 @@
 
 #![allow(clippy::mutable_key_type)] // Hash for Syntax doesn't use mutable fields.
 
-use std::{cell::Cell, collections::HashMap, env, fmt, hash::Hash, num::NonZeroU32};
+use std::{cell::Cell, collections::HashMap, env, fmt, hash::Hash};
 use typed_arena::Arena;
 
 use crate::{
@@ -20,12 +20,12 @@ use Syntax::*;
 impl<'a> fmt::Debug for ChangeKind<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let desc = match self {
-            Unchanged(node) => format!("Unchanged(ID: {})", node.id()),
+            Unchanged(node) => format!("Unchanged({})", node.dbg_content()),
             ReplacedComment(lhs_node, rhs_node) => {
                 format!(
-                    "ReplacedComment(lhs ID: {}, rhs ID: {})",
-                    lhs_node.id(),
-                    rhs_node.id()
+                    "ReplacedComment(lhs: {}, rhs: {})",
+                    lhs_node.dbg_content(),
+                    rhs_node.dbg_content()
                 )
             }
             Novel => "Novel".to_owned(),
@@ -34,17 +34,10 @@ impl<'a> fmt::Debug for ChangeKind<'a> {
     }
 }
 
-pub type SyntaxId = NonZeroU32;
-
 /// Fields that are common to both `Syntax::List` and `Syntax::Atom`.
 pub struct SyntaxInfo<'a> {
-    /// The previous node with the same parent as this one.
-    previous_sibling: Cell<Option<&'a Syntax<'a>>>,
     /// The next node with the same parent as this one.
     next_sibling: Cell<Option<&'a Syntax<'a>>>,
-    /// The syntax node that occurs before this one, in a depth-first
-    /// tree traversal.
-    prev: Cell<Option<&'a Syntax<'a>>>,
     /// The parent syntax node, if present.
     parent: Cell<Option<&'a Syntax<'a>>>,
     /// Does the previous syntax node occur on the same line as the
@@ -52,9 +45,6 @@ pub struct SyntaxInfo<'a> {
     prev_is_contiguous: Cell<bool>,
     /// The number of nodes that are ancestors of this one.
     num_ancestors: Cell<u32>,
-    pub num_after: Cell<usize>,
-    /// A number that uniquely identifies this syntax node.
-    unique_id: Cell<SyntaxId>,
     /// A number that uniquely identifies the content of this syntax
     /// node. This may be the same as nodes on the other side of the
     /// diff, or nodes at different positions.
@@ -69,14 +59,10 @@ pub struct SyntaxInfo<'a> {
 impl<'a> SyntaxInfo<'a> {
     pub fn new() -> Self {
         Self {
-            previous_sibling: Cell::new(None),
             next_sibling: Cell::new(None),
-            prev: Cell::new(None),
             parent: Cell::new(None),
             prev_is_contiguous: Cell::new(false),
             num_ancestors: Cell::new(0),
-            num_after: Cell::new(0),
-            unique_id: Cell::new(NonZeroU32::new(u32::MAX).unwrap()),
             content_id: Cell::new(0),
             content_is_unique: Cell::new(false),
         }
@@ -130,11 +116,7 @@ impl<'a> fmt::Debug for Syntax<'a> {
                 info,
                 ..
             } => {
-                let mut ds = f.debug_struct(&format!(
-                    "List id:{} content:{}",
-                    self.id(),
-                    self.content_id()
-                ));
+                let mut ds = f.debug_struct(&format!("List content:{}", self.content_id()));
 
                 ds.field("open_content", &open_content)
                     .field("open_position", &dbg_pos(open_position))
@@ -160,11 +142,7 @@ impl<'a> fmt::Debug for Syntax<'a> {
                 kind: highlight,
                 ..
             } => {
-                let mut ds = f.debug_struct(&format!(
-                    "Atom id:{} content:{}",
-                    self.id(),
-                    self.content_id()
-                ));
+                let mut ds = f.debug_struct(&format!("Atom content:{}", self.content_id()));
                 ds.field("content", &content);
                 ds.field("position", &dbg_pos(position));
 
@@ -276,12 +254,6 @@ impl<'a> Syntax<'a> {
         self.info().prev_is_contiguous.get()
     }
 
-    /// A unique ID of this syntax node. Every node is guaranteed to
-    /// have a different value.
-    pub fn id(&self) -> SyntaxId {
-        self.info().unique_id.get()
-    }
-
     /// A content ID of this syntax node. Two nodes have the same
     /// content ID if they have the same content, regardless of
     /// position.
@@ -349,9 +321,8 @@ pub fn init_all_info<'a>(lhs_roots: &[&'a Syntax<'a>], rhs_roots: &[&'a Syntax<'
 }
 
 fn init_info<'a>(lhs_roots: &[&'a Syntax<'a>], rhs_roots: &[&'a Syntax<'a>]) {
-    let mut id = NonZeroU32::new(1).unwrap();
-    init_info_on_side(lhs_roots, &mut id);
-    init_info_on_side(rhs_roots, &mut id);
+    init_info_on_side(lhs_roots);
+    init_info_on_side(rhs_roots);
 
     let mut existing = HashMap::new();
     set_content_id(lhs_roots, &mut existing);
@@ -414,42 +385,17 @@ fn set_content_id(nodes: &[&Syntax], existing: &mut HashMap<ContentKey, u32>) {
     }
 }
 
-fn set_num_after(nodes: &[&Syntax], parent_num_after: usize) {
-    for (i, node) in nodes.iter().enumerate() {
-        let num_after = parent_num_after + nodes.len() - 1 - i;
-        node.info().num_after.set(num_after);
-
-        if let List { children, .. } = node {
-            set_num_after(children, num_after);
-        }
-    }
-}
 pub fn init_next_prev<'a>(roots: &[&'a Syntax<'a>]) {
-    set_prev_sibling(roots);
     set_next_sibling(roots);
-    set_prev(roots, None);
-    set_prev_is_contiguous(roots);
+    set_prev_is_contiguous(roots, None);
     unset_parent(roots);
 }
 
 /// Set all the `SyntaxInfo` values for all the `roots` on a single
 /// side (LHS or RHS).
-fn init_info_on_side<'a>(roots: &[&'a Syntax<'a>], next_id: &mut SyntaxId) {
+fn init_info_on_side<'a>(roots: &[&'a Syntax<'a>]) {
     set_parent(roots, None);
     set_num_ancestors(roots, 0);
-    set_num_after(roots, 0);
-    set_unique_id(roots, next_id);
-}
-
-fn set_unique_id(nodes: &[&Syntax], next_id: &mut SyntaxId) {
-    for node in nodes {
-        node.info().unique_id.set(*next_id);
-        *next_id = NonZeroU32::new(u32::from(*next_id) + 1)
-            .expect("Should not have more than u32::MAX nodes");
-        if let List { children, .. } = node {
-            set_unique_id(children, next_id);
-        }
-    }
 }
 
 /// Assumes that `set_content_id` has already run.
@@ -481,21 +427,6 @@ fn set_content_is_unique(nodes: &[&Syntax]) {
     set_content_is_unique_from_counts(nodes, &counts);
 }
 
-fn set_prev_sibling<'a>(nodes: &[&'a Syntax<'a>]) {
-    for (i, node) in nodes.iter().enumerate() {
-        if i == 0 {
-            continue;
-        }
-
-        let sibling = nodes.get(i - 1).copied();
-        node.info().previous_sibling.set(sibling);
-
-        if let List { children, .. } = node {
-            set_prev_sibling(children);
-        }
-    }
-}
-
 fn set_next_sibling<'a>(nodes: &[&'a Syntax<'a>]) {
     for (i, node) in nodes.iter().enumerate() {
         let sibling = nodes.get(i + 1).copied();
@@ -503,19 +434,6 @@ fn set_next_sibling<'a>(nodes: &[&'a Syntax<'a>]) {
 
         if let List { children, .. } = node {
             set_next_sibling(children);
-        }
-    }
-}
-
-/// For every syntax node in the tree, mark the previous node
-/// according to a preorder traversal.
-fn set_prev<'a>(nodes: &[&'a Syntax<'a>], parent: Option<&'a Syntax<'a>>) {
-    for (i, node) in nodes.iter().enumerate() {
-        let node_prev = if i == 0 { parent } else { Some(nodes[i - 1]) };
-
-        node.info().prev.set(node_prev);
-        if let List { children, .. } = node {
-            set_prev(children, Some(node));
         }
     }
 }
@@ -545,9 +463,10 @@ fn set_num_ancestors(nodes: &[&Syntax], num_ancestors: u32) {
     }
 }
 
-fn set_prev_is_contiguous(roots: &[&Syntax]) {
-    for node in roots {
-        let is_contiguous = if let Some(prev) = node.info().prev.get() {
+fn set_prev_is_contiguous<'a>(nodes: &[&'a Syntax<'a>], parent: Option<&'a Syntax<'a>>) {
+    for (i, node) in nodes.iter().enumerate() {
+        let node_prev = if i == 0 { parent } else { Some(nodes[i - 1]) };
+        let is_contiguous = if let Some(prev) = node_prev {
             match prev {
                 List {
                     open_position,
@@ -569,7 +488,7 @@ fn set_prev_is_contiguous(roots: &[&Syntax]) {
         };
         node.info().prev_is_contiguous.set(is_contiguous);
         if let List { children, .. } = node {
-            set_prev_is_contiguous(children);
+            set_prev_is_contiguous(children, Some(node));
         }
     }
 }

@@ -320,6 +320,7 @@ fn diff_file_content(
         }
         Some(ts_lang) => {
             let arena = Arena::new();
+            eprintln!("{}", std::mem::size_of::<syntax::Syntax>());
             let lhs = tsp::parse(&arena, &lhs_src, &ts_lang);
             let rhs = tsp::parse(&arena, &rhs_src, &ts_lang);
 
