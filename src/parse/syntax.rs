@@ -78,17 +78,17 @@ impl<'a> Default for SyntaxInfo<'a> {
 pub enum Syntax<'a> {
     List {
         info: SyntaxInfo<'a>,
-        open_position: Vec<SingleLineSpan>,
-        open_content: String,
+        open_position: Box<[SingleLineSpan]>,
+        open_content: Box<str>, // probably change to &str?
         children: Vec<&'a Syntax<'a>>,
-        close_position: Vec<SingleLineSpan>,
-        close_content: String,
+        close_position: Box<[SingleLineSpan]>,
+        close_content: Box<str>, // probably change to &str?
         num_descendants: u32,
     },
     Atom {
         info: SyntaxInfo<'a>,
-        position: Vec<SingleLineSpan>,
-        content: String,
+        position: Box<[SingleLineSpan]>,
+        content: Box<str>, // probably change to &str?
         kind: AtomKind,
     },
 }
@@ -207,10 +207,10 @@ impl<'a> Syntax<'a> {
 
         arena.alloc(List {
             info: SyntaxInfo::default(),
-            open_position,
+            open_position: open_position.into_boxed_slice(),
             open_content: open_content.into(),
             close_content: close_content.into(),
-            close_position,
+            close_position: close_position.into_boxed_slice(),
             children,
             num_descendants,
         })
@@ -230,7 +230,7 @@ impl<'a> Syntax<'a> {
 
         arena.alloc(Atom {
             info: SyntaxInfo::default(),
-            position,
+            position: position.into_boxed_slice(),
             content: content.into(),
             kind,
         })
@@ -332,7 +332,7 @@ fn init_info<'a>(lhs_roots: &[&'a Syntax<'a>], rhs_roots: &[&'a Syntax<'a>]) {
     set_content_is_unique(rhs_roots);
 }
 
-type ContentKey = (Option<String>, Option<String>, Vec<u32>, bool, bool);
+type ContentKey = (Option<Box<str>>, Option<Box<str>>, Vec<u32>, bool, bool);
 
 fn set_content_id(nodes: &[&Syntax], existing: &mut HashMap<ContentKey, u32>) {
     for node in nodes {
@@ -369,7 +369,7 @@ fn set_content_id(nodes: &[&Syntax], existing: &mut HashMap<ContentKey, u32>) {
                         .map(|l| l.trim_start())
                         .collect::<Vec<_>>()
                         .join("\n")
-                        .to_string()
+                        .into()
                 } else {
                     content.clone()
                 };
@@ -695,7 +695,7 @@ impl MatchedPos {
                 let kind = MatchKind::UnchangedToken {
                     highlight,
                     self_pos: pos.to_vec(),
-                    opposite_pos,
+                    opposite_pos: opposite_pos.to_vec(),
                 };
 
                 // Create a MatchedPos for every line that `pos` covers.
@@ -884,7 +884,7 @@ mod tests {
         match atom {
             List { .. } => unreachable!(),
             Atom { content, .. } => {
-                assert_eq!(content, "foo");
+                assert_eq!(content.as_ref(), "foo");
             }
         }
     }
